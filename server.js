@@ -17,7 +17,7 @@ const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 let userAccessToken = null;
 let userReposCache = [];
@@ -132,13 +132,14 @@ app.post("/ai-search", async (req, res) => {
             Based on the query, which repositories are most relevant? Return ONLY a JSON array of repository names. If none, return [].`;
 
     let repoResult = await model.generateContent(repoPrompt);
-    let relevantRepoNames = JSON.parse(
-      repoResult.response
-        .text()
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim()
-    );
+    let relevantRepoNames = [];
+    try {
+      const text = repoResult.response.text();
+      const match = text.match(/\[[\s\S]*\]/);
+      relevantRepoNames = JSON.parse(match ? match[0] : text);
+    } catch(e) {
+      console.error("Failed to parse repo names", repoResult.response.text());
+    }
 
     const relevantRepos = userReposCache.filter((repo) =>
       relevantRepoNames.includes(repo.name)
@@ -168,15 +169,17 @@ app.post("/ai-search", async (req, res) => {
             Based on the query, which files are most relevant? Return ONLY a JSON array of the full file paths. If none, return [].`;
 
         let fileResult = await model.generateContent(filePrompt);
-        let relevantFilePaths = JSON.parse(
-          fileResult.response
-            .text()
-            .replace(/```json/g, "")
-            .replace(/```/g, "")
-            .trim()
-        );
+        let relevantFilePaths = [];
+        try {
+          const text = fileResult.response.text();
+          const match = text.match(/\[[\s\S]*\]/);
+          relevantFilePaths = JSON.parse(match ? match[0] : text);
+        } catch(e) {
+          console.error("Failed to parse file names", fileResult.response.text());
+        }
 
         if (relevantFilePaths.length > 0) {
+          let foundFile = false;
           relevantFilePaths.forEach((path) => {
             // Find the full file node to get the SHA
             const fileNode = fileNodes.find((node) => node.path === path);
@@ -193,8 +196,12 @@ app.post("/ai-search", async (req, res) => {
                   },
                 },
               });
+              foundFile = true;
             }
           });
+          if (!foundFile) {
+            finalResults.push({ type: "repo", data: repo });
+          }
         } else {
           finalResults.push({ type: "repo", data: repo });
         }
